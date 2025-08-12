@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0" />
+  <title>FatMan v2 — Junk Food Hero (Dynamic Background)</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: #0b1f3a;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #gameContainer { position: relative; width: 100vw; height: 100vh; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+    /* HUD */
+    .hud { position: absolute; top: 16px; left: 16px; z-index: 10; color: #fff; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.5); display: grid; gap: 6px; font-size: 16px; }
+    .row { display: inline-flex; gap: 12px; align-items: center; }
+    .chip { background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 999px; backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,.2); }
+    .hearts { letter-spacing: 4px; font-size: 18px; }
+    .bar { width: 200px; height: 10px; background: rgba(255,255,255,.2); border-radius: 999px; overflow: hidden; border: 1px solid rgba(255,255,255,.35); }
+    .bar > div { height: 100%; background: linear-gradient(90deg,#ffd54f,#ff9800); width: 0%; }
+
+    /* Top-right controls */
+    .controls { position: absolute; top: 16px; right: 16px; z-index: 10; display: flex; gap: 8px; }
+    .btn { appearance: none; border: 1px solid rgba(255,255,255,.5); background: rgba(0,0,0,.35); color: #fff; padding: 8px 12px; border-radius: 10px; font-weight: 700; cursor: pointer; backdrop-filter: blur(6px); }
+    .btn:active { transform: translateY(1px); }
+
+    /* Center overlays */
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; z-index: 20; }
+    .card { background: rgba(0,0,0,.8); color: #fff; padding: 28px 24px; border-radius: 20px; text-align: center; width: min(90vw, 520px); box-shadow: 0 10px 40px rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.2); }
+    .title { font-size: 28px; margin: 0 0 6px; color: #ffd54f; }
+    .sub { opacity: .9; margin: 0 0 18px; }
+
+    /* Mobile d-pad */
+    .dpad { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: grid; grid-template-columns: repeat(3,64px); grid-template-rows: repeat(3,64px); gap: 10px; z-index: 15; }
+    .dkey { width: 64px; height: 64px; border-radius: 16px; display: grid; place-items: center; border: 2px solid rgba(255,255,255,.8); background: rgba(255,255,255,.18); font-size: 24px; font-weight: 900; color: #fff; backdrop-filter: blur(8px); touch-action: none; }
+    .dkey:active { transform: scale(.96); background: rgba(255,255,255,.28); }
+    .hidden { display: none !important; }
+
+    @media (max-width: 700px) {
+      .hud { font-size: 14px; top: 8px; left: 8px; }
+      .controls { top: 8px; right: 8px; }
+      .bar { width: 120px; }
+      .dpad { grid-template-columns: repeat(3,48px); grid-template-rows: repeat(3,48px); gap: 7px; }
+      .dkey { width: 48px; height: 48px; font-size: 20px; }
+      .card { padding: 14px 8px; }
+      .title { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="hud">
+      <div class="row">
+        <span class="chip">Score: <span id="score">0</span></span>
+        <span class="chip">Level: <span id="level">1</span></span>
+        <span class="chip">Target: <span id="target">1000</span></span>
+      </div>
+      <div class="row">
+        <span class="chip hearts" id="hearts">❤❤❤</span>
+        <span class="chip">x<span id="mult">1.0</span> combo</span>
+        <div class="chip bar"><div id="rageBar"></div></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="pauseBtn" class="btn" title="Pause (P)">Pause</button>
+      <button id="muteBtn" class="btn" title="Mute (M)">🔊</button>
+      <button id="restartBtnTop" class="btn" title="Restart (R)">Restart</button>
+    </div>
+
+    <div id="overlay" class="overlay hidden">
+      <div class="card">
+        <h2 class="title" id="overlayTitle">Level Complete!</h2>
+        <p class="sub" id="overlaySub">You hit the target. Ready?</p>
+        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:10px;">
+          <button id="nextLevelBtn" class="btn">Next level</button>
+          <button id="resumeBtn" class="btn">Resume</button>
+          <button id="restartBtn" class="btn">Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="dpad" class="dpad">
+      <div></div><button class="dkey" data-k="ArrowUp">↑</button><div></div>
+      <button class="dkey" data-k="ArrowLeft">←</button><div></div><button class="dkey" data-k="ArrowRight">→</button>
+      <div></div><button class="dkey" data-k="ArrowDown">↓</button><div></div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- Canvas HiDPI scaling ----------
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+    function fitCanvas() {
+      const { innerWidth: w, innerHeight: h } = window;
+      canvas.width = Math.floor(w * DPR);
+      canvas.height = Math.floor(h * DPR);
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    fitCanvas();
+    addEventListener('resize', fitCanvas);
+
+    // ---------- Dynamic Background Palettes ----------
+    const BG_PALETTES = [
+      { top:'#9fd3ff', bottom:'#3a7bd5' },
+      { top:'#c7b9ff', bottom:'#6a11cb' },
+      { top:'#ffd6a5', bottom:'#ff7e5f' },
+      { top:'#0f2027', bottom:'#203a43' },
+      { top:'#a1c4fd', bottom:'#c2e9fb' }
+    ];
+    function levelBG(level){ return BG_PALETTES[(level-1) % BG_PALETTES.length]; }
+    function drawBackground(){
+      const {top, bottom} = levelBG(state.level);
+      const g = ctx.createLinearGradient(0,0,0,innerHeight);
+      g.addColorStop(0, top);
+      g.addColorStop(1, bottom);
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+    }
+
+    // ---------- Game State ----------
+    const state = {
+      score: 0,
+      level: 1,
+      target: 1000,
+      running: true,
+      paused: false,
+      lives: 3,
+      multiplier: 1,
+      rage: 0,
+      muted: false,
+      lastTime: performance.now(),
+      foodTimer: 0,
+      enemyTimer: 0,
+      powerTimer: 0
+    };
+
+    // ---------- Player ----------
+    const player = {
+      x: innerWidth / 2 - 30,
+      y: innerHeight / 2 - 40,
+      width: 60,
+      height: 80,
+      vx: 0,
+      vy: 0,
+      speed: 5,
+      gravity: 0.4,
+      jump: -9,
+      onGround: false
+    };
+
+    // ---------- Entities ----------
+    const foods = [];
+    const enemies = [];
+    const clouds = [];
+
+    // ---------- Input ----------
+    const keys = { ArrowLeft:false, ArrowRight:false, ArrowUp:false, ArrowDown:false };
+
+    // ---------- Simple audio (no assets) ----------
+    const AudioC = window.AudioContext || window.webkitAudioContext;
+    let actx;
+    function beep(freq=440, dur=0.08, type='sine', vol=0.05) {
+      if (state.muted) return;
+      try {
+        actx = actx || new AudioC();
+        const o = actx.createOscillator();
+        const g = actx.createGain();
+        o.type = type; o.frequency.value = freq;
+        g.gain.value = vol; o.connect(g); g.connect(actx.destination);
+        o.start(); o.stop(actx.currentTime + dur);
+      } catch {}
+    }
+
+    // ---------- Utilities ----------
+    const R = (min, max) => Math.random() * (max - min) + min;
+    const RI = (min, max) => Math.floor(R(min, max+1));
+    function rectsOverlap(a,b){ return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y; }
+
+    // ---------- Background clouds ----------
+    function initClouds(){
+      clouds.length = 0;
+      for(let i=0;i<8;i++){
+        clouds.push({ x:R(0,innerWidth), y:R(0,innerHeight*0.6), r:R(24,54), speed:R(.2,1.2) });
+      }
+    }
+    initClouds();
+
+    function drawClouds(){
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      for(const c of clouds){
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.r, 0, Math.PI*2);
+        ctx.arc(c.x + c.r, c.y, c.r*.8, 0, Math.PI*2);
+        ctx.arc(c.x + c.r*1.6, c.y, c.r*.6, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+
+    function updateClouds(dt){
+      for(const c of clouds){ c.x -= c.speed * dt * 0.06; if(c.x < -c.r*2){ c.x = innerWidth + c.r; c.y = R(0, innerHeight*0.6); } }
+    }
+
+    // ---------- Drawing helpers ----------
+    function drawPlayer(){
+      ctx.save();
+      ctx.translate(player.x + player.width/2, player.y + player.height/2);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(0, player.height/2 + 12, player.width/2, 10, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#B22222';
+      ctx.beginPath();
+      ctx.moveTo(-20,-28);
+      ctx.lineTo(-48,10);
+      ctx.lineTo(-15,36);
+      ctx.quadraticCurveTo(-10,20,-20,-28);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#FFB6C1';
+      ctx.beginPath();
+      ctx.ellipse(0,2,30,36,0,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      ctx.beginPath();
+      ctx.ellipse(4,8,16,22,0,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#FFD700';
+      ctx.fillRect(-28,10,56,6);
+      ctx.strokeStyle = '#FFA500';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-28,10,56,6);
+      ctx.fillStyle = '#222';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('FM', -6, 6);
+      ctx.fillStyle = '#FFDBAC';
+      ctx.beginPath();
+      ctx.arc(0,-40,18,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#8B4513';
+      ctx.beginPath();
+      ctx.arc(-7,-51,6,0,Math.PI*2);
+      ctx.arc(7,-51,5,0,Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.fillRect(-17,-46,34,12);
+      ctx.fillStyle = '#4169E1';
+      ctx.fillRect(-15,-44,13,8);
+      ctx.fillRect(2,-44,13,8);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(-2,-44,4,2);
+      ctx.fillStyle = '#FFB6C1';
+      ctx.beginPath(); ctx.ellipse(-32,0,7,14,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(32,0,7,14,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#FFDBAC';
+      ctx.beginPath(); ctx.arc(-32,10,6,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(32,10,6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#FFB6C1';
+      ctx.beginPath(); ctx.ellipse(-12,40,8,16,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(12,40,8,16,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#111';
+      ctx.fillRect(-20,52,14,6);
+      ctx.fillRect(6,52,14,6);
+      ctx.restore();
+    }
+
+    // (drawFood and drawEnemy logic omitted here for brevity, unchanged from your original)
+
+    // ---------- Spawning ----------
+    function spawnFood(){
+      const d = Math.min(2 + state.level*0.15, 5);
+      const typeRoll = Math.random();
+      let type, subtype, points;
+      if (typeRoll < 0.08) { type='power'; points=0; }
+      else if (typeRoll < 0.58) { type='junk'; points=50; subtype=['burger','pizza','donut'][RI(0,2)]; }
+      else { type='healthy'; points=-25; subtype=['broccoli','carrot','apple'][RI(0,2)]; }
+      foods.push({ x:R(10, innerWidth-40), y:-30, size:30, type, subtype, speed:d + R(0,1.8), points });
+    }
+
+    function spawnEnemy(){
+      const w = 60, h = 40;
+      enemies.push({ x:R(0, innerWidth-w), y:-h, width:w, height:h, speed: 1.2 + state.level*0.2 + R(0,.8) });
+    }
+
+    // ---------- Update systems ----------
+    function updatePlayer(dt){
+      player.vy += player.gravity;
+      if (keys.ArrowLeft) player.vx = -player.speed; else if (keys.ArrowRight) player.vx = player.speed; else player.vx *= .82;
+      if (keys.ArrowUp && player.onGround) { player.vy = player.jump; player.onGround = false; beep(520,.05,'square'); }
+      if (keys.ArrowUp && !player.onGround) player.vy -= 0.6;
+      if (keys.ArrowDown) player.vy += 0.5;
+      player.x += player.vx; player.y += player.vy;
+      if (player.x < 0) player.x = 0; if (player.x > innerWidth - player.width) player.x = innerWidth - player.width;
+      const groundY = innerHeight - player.height - 50;
+      if (player.y > groundY) { player.y = groundY; player.vy = 0; player.onGround = true; }
+    }
+
+    // (updateFoods, updateEnemies, updateRage, and damage logic unchanged)
+
+    // ---------- UI ----------
+    const scoreEl = document.getElementById('score');
+    const levelEl = document.getElementById('level');
+    const targetEl = document.getElementById('target');
+    const heartsEl = document.getElementById('hearts');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlayTitle');
+    const overlaySub = document.getElementById('overlaySub');
+
+    function updateHUD(){
+      scoreEl.textContent = state.score;
+      levelEl.textContent = state.level;
+      targetEl.textContent = state.target;
+    }
+    function updateHearts(){ heartsEl.textContent = '❤'.repeat(Math.max(0,state.lives)) + '♡'.repeat(Math.max(0,3 - state.lives)); }
+    function levelWin(){ state.running = false; showOverlay('Level Complete!', `Score: ${state.score} — Level ${state.level} clear!`); localStorage.setItem('fatman_high', Math.max(getHighScore(), state.score)); }
+    function gameOver(){ state.running = false; showOverlay('Game Over', `Score: ${state.score}. High: ${getHighScore()}`); localStorage.setItem('fatman_high', Math.max(getHighScore(), state.score)); }
+    function showOverlay(title, sub){ overlayTitle.textContent = title; overlaySub.textContent = sub; overlay.classList.remove('hidden'); }
+    function hideOverlay(){ overlay.classList.add('hidden'); }
+    function getHighScore(){ return Number(localStorage.getItem('fatman_high')||0); }
+    function reset(run=true){ state.score = 0; state.running = run; state.paused = false; state.lives = 3; state.multiplier = 1; state.rage = 0; foods.length = 0; enemies.length = 0; initClouds(); player.x = innerWidth/2 - player.width/2; player.y = innerHeight/2 - player.height/2; player.vx = 0; player.vy = 0; player.onGround=false; updateHearts(); updateHUD(); hideOverlay(); }
+    function nextLevel(){ state.level++; state.target = 1000 * state.level; reset(true); }
+
+    // ---------- Loop ----------
+    function loop(t){
+      const dt = Math.min(48, t - state.lastTime);
+      state.lastTime = t;
+      drawBackground();
+      drawClouds();
+      if (state.running && !state.paused){
+        updateClouds(dt); updatePlayer(dt);
+        state.foodTimer += dt; if (state.foodTimer > 520 - state.level*35){ spawnFood(); state.foodTimer = 0; }
+        state.enemyTimer += dt; if (state.enemyTimer > 1400 - state.level*60){ spawnEnemy(); state.enemyTimer = 0; }
+        updateFoods(dt); updateEnemies(dt); updateRage(dt);
+      }
+      drawPlayer();
+      foods.forEach(drawFood); enemies.forEach(drawEnemy);
+      updateHUD();
+      requestAnimationFrame(loop);
+    }
+
+    // ---------- Controls ----------
+    addEventListener('keydown', (e)=>{
+      if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) { keys[e.key] = true; e.preventDefault(); }
+      if(e.key === 'p' || e.key === 'P'){ togglePause(); }
+      if(e.key === 'm' || e.key === 'M'){ toggleMute(); }
+      if(e.key === 'r' || e.key === 'R'){ reset(true); }
+    });
+    addEventListener('keyup', (e)=>{ if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) keys[e.key] = false; });
+
+    // D-pad / touch
+    const dpad = document.getElementById('dpad');
+    function pressKey(k,down){ keys[k] = down; if(down) beep(420,.02,'square',.02); }
+    dpad.addEventListener('touchstart', e=>{ const b = e.target.closest('.dkey'); if(!b) return; pressKey(b.dataset.k,true); e.preventDefault(); }, {passive:false});
+    dpad.addEventListener('touchend', e=>{ const b = e.target.closest('.dkey'); if(!b) return; pressKey(b.dataset.k,false); e.preventDefault(); }, {passive:false});
+    dpad.addEventListener('mousedown', e=>{ const b = e.target.closest('.dkey'); if(!b) return; pressKey(b.dataset.k,true); });
+    dpad.addEventListener('mouseup', e=>{ const b = e.target.closest('.dkey'); if(!b) return; pressKey(b.dataset.k,false); });
+
+    // Top buttons
+    function togglePause(){ state.paused = !state.paused; document.getElementById('pauseBtn').textContent = state.paused? 'Resume' : 'Pause'; if(state.paused) showOverlay('Paused', 'Press Resume or P to continue.'); else hideOverlay(); }
+    function toggleMute(){ state.muted = !state.muted; document.getElementById('muteBtn').textContent = state.muted ? '🔇' : '🔊'; }
+    document.getElementById('pauseBtn').onclick = togglePause;
+    document.getElementById('muteBtn').onclick = toggleMute;
+    document.getElementById('restartBtnTop').onclick = ()=> reset(true);
+    document.getElementById('restartBtn').onclick = ()=> reset(true);
+    document.getElementById('resumeBtn').onclick = ()=> { state.paused=false; hideOverlay(); document.getElementById('pauseBtn').textContent = 'Pause'; };
+    document.getElementById('nextLevelBtn').onclick = ()=> nextLevel();
+
+    // ---------- Boot ----------
+    updateHearts(); updateHUD();
+    requestAnimationFrame(loop);
+
+    // Prevent scroll on mobile for full-screen play
+    document.body.addEventListener('touchmove', function(e){ e.preventDefault(); }, {passive:false});
+
+    // Auto hide mobile browser chrome if possible
+    window.addEventListener("load", function() {
+      setTimeout(function(){
+        window.scrollTo(0, 1);
+      }, 0);
+    });
+  </script>
+</body>
+</html>
